@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from datetime import datetime, timedelta
 import sqlite3
 import os
@@ -158,6 +158,41 @@ def get_pending_redemptions():
                 "status": row[5]
             } for row in rows
         ])
+
+@app.route("/api/redeem/mark_paid", methods=["POST"])
+def mark_redeem_paid():
+    data = request.json
+    redemption_id = data.get("id")
+
+    if not redemption_id:
+        return jsonify({"error": "Missing redemption ID"}), 400
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE pending_redemptions SET status = 'paid' WHERE id = ?", (redemption_id,))
+        conn.commit()
+
+    return jsonify({"success": True, "id": redemption_id})
+
+@app.route("/api/redeem/export_csv", methods=["GET"])
+def export_csv():
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, user_id, coins_redeemed, usd_value, requested_at, status
+            FROM pending_redemptions
+        """)
+        rows = cursor.fetchall()
+
+    csv_data = "id,user_id,coins_redeemed,usd_value,requested_at,status\n"
+    for row in rows:
+        csv_data += ",".join(map(str, row)) + "\n"
+
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=redemptions.csv"}
+    )
 
 @app.route("/api/redeem/expire_old", methods=["POST"])
 def expire_old_redemptions():
