@@ -234,6 +234,26 @@ def reset_monthly():
         """, (today,))
         conn.commit()
     return jsonify({"success": True, "message": "Monthly stats reset"})
+@app.route("/api/export/redemptions", methods=["GET"])
+def export_redemptions_csv():
+    from io import StringIO
+    output = StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow(["id", "user_id", "coins_redeemed", "usd_value", "requested_at", "status"])
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, user_id, coins_redeemed, usd_value, requested_at, status FROM pending_redemptions")
+        for row in cursor.fetchall():
+            writer.writerow(row)
+
+    output.seek(0)
+    return app.response_class(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=redemptions_export.csv"}
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
