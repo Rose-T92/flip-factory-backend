@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, abort
 from datetime import datetime, timedelta
 import sqlite3
 import os
@@ -8,6 +8,12 @@ app = Flask(__name__)
 DB_PATH = "database.db"
 CSV_LOG_PATH = "redemptions.csv"
 MAX_MONTHLY_COINS = 50_000_000  # $50.00 per month
+API_KEY = os.getenv("API_KEY", "supersecret123")  # Store in Render secrets in production
+
+def require_api_key():
+    key = request.headers.get("X-API-Key")
+    if key != API_KEY:
+        abort(403)
 
 # Initialize DB if not exists
 def init_db():
@@ -70,6 +76,7 @@ def home():
 
 @app.route("/api/coin/earn", methods=["POST"])
 def coin_earn():
+    require_api_key()
     data = request.json
     user_id = data.get("user_id")
     coins = int(data.get("coins", 0))
@@ -83,9 +90,9 @@ def coin_earn():
         conn.commit()
 
     return jsonify({"success": True, "earned": coins})
-
 @app.route("/api/coin/redeem", methods=["POST"])
 def coin_redeem():
+    require_api_key()
     data = request.json
     user_id = data.get("user_id")
     requested_coins = int(data.get("requested_coins", 0))
@@ -107,6 +114,8 @@ def coin_redeem():
 
 @app.route("/api/coin/exchange", methods=["POST"])
 def coin_exchange():
+    require_api_key()  # 🔒 Enforce API key check
+
     data = request.json
     user_id = data.get("user_id")
     usd_requested = float(data.get("usd", 0.0))
@@ -138,8 +147,10 @@ def coin_exchange():
 
     return jsonify({"success": True, "usd_requested": f"${usd_requested:.2f}", "expires_in": "24 hours"})
 
+
 @app.route("/api/redeem/pending", methods=["GET"])
 def get_pending_redemptions():
+    require_api_key()
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -161,6 +172,7 @@ def get_pending_redemptions():
 
 @app.route("/api/redeem/mark_paid", methods=["POST"])
 def mark_redeem_paid():
+    require_api_key()
     data = request.json
     redemption_id = data.get("id")
 
@@ -176,6 +188,7 @@ def mark_redeem_paid():
 
 @app.route("/api/redeem/export_csv", methods=["GET"])
 def export_csv():
+    require_api_key()
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -196,6 +209,7 @@ def export_csv():
 
 @app.route("/api/redeem/expire_old", methods=["POST"])
 def expire_old_redemptions():
+    require_api_key()
     expired_time = (datetime.utcnow() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -210,6 +224,8 @@ def expire_old_redemptions():
 
 @app.route("/api/coin/status", methods=["GET"])
 def coin_status():
+    require_api_key()  # 🔒 Enforce API key access
+
     user_id = request.args.get("user_id")
     if not user_id:
         return jsonify({"error": "Missing user_id"}), 400
@@ -224,8 +240,11 @@ def coin_status():
         "dollar_value_redeemed": f"${user['monthly_coin_redeemed'] / 1_000_000:.2f}"
     })
 
+
+
 @app.route("/api/coin/reset_monthly", methods=["POST"])
 def reset_monthly():
+    require_api_key()  # 🔒 Enforce API key check
     today = datetime.utcnow().strftime("%Y-%m-%d")
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -234,8 +253,11 @@ def reset_monthly():
         """, (today,))
         conn.commit()
     return jsonify({"success": True, "message": "Monthly stats reset"})
+
 @app.route("/api/export/redemptions", methods=["GET"])
 def export_redemptions_csv():
+    require_api_key()  # 🔒 Enforce API key check
+
     from io import StringIO
     output = StringIO()
     writer = csv.writer(output)
@@ -257,3 +279,4 @@ def export_redemptions_csv():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
