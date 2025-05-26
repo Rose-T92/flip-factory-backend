@@ -19,14 +19,19 @@ def require_api_key():
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
+
+        # Updated users table with daily ad view tracking
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
             monthly_coin_earned INTEGER DEFAULT 0,
             monthly_coin_redeemed INTEGER DEFAULT 0,
-            last_reset TEXT
+            last_reset TEXT,
+            daily_ad_views INTEGER DEFAULT 0,
+            ad_reset_date TEXT
         )
         """)
+
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS pending_redemptions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,7 +42,9 @@ def init_db():
             status TEXT DEFAULT 'pending'
         )
         """)
+
         conn.commit()
+
 
 # Create log entry in CSV
 def log_redemption_csv(user_id, usd_value, coins_redeemed, status="pending"):
@@ -60,15 +67,35 @@ def get_or_create_user(user_id):
         user = cursor.fetchone()
         if not user:
             today = datetime.utcnow().strftime("%Y-%m-%d")
-            cursor.execute("INSERT INTO users (user_id, last_reset) VALUES (?, ?)", (user_id, today))
+            cursor.execute("""
+                INSERT INTO users (
+                    user_id,
+                    monthly_coin_earned,
+                    monthly_coin_redeemed,
+                    last_reset,
+                    daily_ad_views,
+                    ad_reset_date
+                ) VALUES (?, 0, 0, ?, 0, ?)
+            """, (user_id, today, today))
             conn.commit()
-            return {"user_id": user_id, "monthly_coin_earned": 0, "monthly_coin_redeemed": 0, "last_reset": today}
+            return {
+                "user_id": user_id,
+                "monthly_coin_earned": 0,
+                "monthly_coin_redeemed": 0,
+                "last_reset": today,
+                "daily_ad_views": 0,
+                "ad_reset_date": today
+            }
+
         return {
             "user_id": user[0],
             "monthly_coin_earned": user[1],
             "monthly_coin_redeemed": user[2],
-            "last_reset": user[3]
+            "last_reset": user[3],
+            "daily_ad_views": user[4] if len(user) > 4 else 0,
+            "ad_reset_date": user[5] if len(user) > 5 else datetime.utcnow().strftime("%Y-%m-%d")
         }
+
 
 @app.route("/")
 def home():
@@ -80,16 +107,40 @@ def coin_earn():
     data = request.json
     user_id = data.get("user_id")
     coins = int(data.get("coins", 0))
+
     if not user_id or coins <= 0:
         return jsonify({"error": "Invalid request"}), 400
 
-    get_or_create_user(user_id)
+    user = get_or_create_user(user_id)
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET monthly_coin_earned = monthly_coin_earned + ? WHERE user_id = ?", (coins, user_id))
+
+        # Reset ad count if it's a new day
+        if user["ad_reset_date"] != today:
+            cursor.execute("""
+                UPDATE users
+                SET daily_ad_views = 1,
+                    ad_reset_date = ?,
+                    monthly_coin_earned = monthly_coin_earned + ?
+                WHERE user_id = ?
+            """, (today, coins, user_id))
+        else:
+            if user["daily_ad_views"] >= 15:
+                return jsonify({"error": "Daily ad limit reached"}), 403
+
+            cursor.execute("""
+                UPDATE users
+                SET daily_ad_views = daily_ad_views + 1,
+                    monthly_coin_earned = monthly_coin_earned + ?
+                WHERE user_id = ?
+            """, (coins, user_id))
+
         conn.commit()
 
     return jsonify({"success": True, "earned": coins})
+
 @app.route("/api/coin/redeem", methods=["POST"])
 def coin_redeem():
     require_api_key()
@@ -237,6 +288,8 @@ def coin_status():
         "earned": user["monthly_coin_earned"],
         "redeemed": user["monthly_coin_redeemed"],
         "remaining_redeemable_coins": remaining,
+        "daily_ad_views": user.get("daily_ad_views", 0),
+        "ads_remaining_today": max(0, 15 - user.get("daily_ad_views", 0)),
         "dollar_value_redeemed": f"${user['monthly_coin_redeemed'] / 1_000_000:.2f}"
     })
 
