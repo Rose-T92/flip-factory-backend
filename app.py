@@ -15,22 +15,28 @@ def require_api_key():
     if key != API_KEY:
         abort(403)
 
-# Initialize DB if not exists
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
 
-        # Updated users table with daily ad view tracking
+        # Users table with daily ad view tracking
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
             monthly_coin_earned INTEGER DEFAULT 0,
             monthly_coin_redeemed INTEGER DEFAULT 0,
+            total_coin_earned INTEGER DEFAULT 0,
             last_reset TEXT,
             daily_ad_views INTEGER DEFAULT 0,
             ad_reset_date TEXT
         )
         """)
+
+        # Ensure total_coin_earned exists even if upgrading live DB
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if 'total_coin_earned' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN total_coin_earned INTEGER DEFAULT 0")
 
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS pending_redemptions (
@@ -44,6 +50,7 @@ def init_db():
         """)
 
         conn.commit()
+
 
 
 # Create log entry in CSV
